@@ -6,9 +6,11 @@ import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.entity.DragonFireball;
 import org.bukkit.util.Vector;
+import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.Action;
+import org.bukkit.event.entity.AreaEffectCloudApplyEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -35,6 +37,13 @@ public class BaneOfDragons extends JavaPlugin implements Listener {
     public void onEnable() {
         getServer().getPluginManager().registerEvents(this, this);
         getLogger().info("BaneOfDragons enabled!");
+    }
+
+    @EventHandler
+    public void onAreaEffectCloud(AreaEffectCloudApplyEvent event) {
+        event.getAffectedEntities().removeIf(
+            entity -> entity instanceof Player p && ALLOWED.contains(p.getName())
+        );
     }
 
     @EventHandler
