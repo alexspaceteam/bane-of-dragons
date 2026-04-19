@@ -4,6 +4,8 @@ import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.entity.DragonFireball;
+import org.bukkit.util.Vector;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.Action;
@@ -107,7 +109,9 @@ public class BaneOfDragons extends JavaPlugin implements Listener {
                     ? result.getHitBlock().getLocation().add(0.5, 0, 0.5)
                     : player.getEyeLocation().add(player.getEyeLocation().getDirection().multiply(50));
 
-                player.getWorld().strikeLightning(target);
+                var spawnLoc = target.clone().add(0, 15, 0);
+                var fireball = player.getWorld().spawn(spawnLoc, DragonFireball.class);
+                fireball.setDirection(new Vector(0, -1, 0));
             }
         };
 
