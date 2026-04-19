@@ -30,15 +30,15 @@ public class BaneOfDragons extends JavaPlugin implements Listener {
 
     private static final Set<String> ALLOWED = Set.of(".Fireburner3309", "_Abraxis");
 
-    private static final long CLICK_WINDOW_MS   = 400;
-    private static final int  STARFALL_DELAY    = 20;  // 1 second before starfall starts
-    private static final int  STARFALL_DURATION = 100; // 5 seconds of starfall
-    private static final int  STARFALL_INTERVAL = 10;  // fireball every 0.5s
+    private static final long CLICK_WINDOW_MS  = 400;
+    private static final int  PENDING_DELAY    = 8;   // ticks to wait before firing (allows double-click)
+    private static final int  STARFALL_DURATION = 100;
+    private static final int  STARFALL_INTERVAL = 10;
 
-    private final Map<UUID, Integer>    clickCount     = new HashMap<>();
-    private final Map<UUID, Long>       lastClickTime  = new HashMap<>();
-    private final Map<UUID, BukkitTask> pendingStarfall = new HashMap<>();
-    private final Map<UUID, BukkitTask> starfallTasks  = new HashMap<>();
+    private final Map<UUID, Integer>    clickCount    = new HashMap<>();
+    private final Map<UUID, Long>       lastClickTime = new HashMap<>();
+    private final Map<UUID, BukkitTask> pendingTask   = new HashMap<>();
+    private final Map<UUID, BukkitTask> starfallTasks = new HashMap<>();
 
     @Override
     public void onEnable() {
@@ -63,8 +63,19 @@ public class BaneOfDragons extends JavaPlugin implements Listener {
         );
     }
 
+    // Left-click → Shadow Slash
     @EventHandler
-    public void onPlayerInteract(PlayerInteractEvent event) {
+    public void onLeftClick(PlayerInteractEvent event) {
+        if (event.getAction() != Action.LEFT_CLICK_AIR && event.getAction() != Action.LEFT_CLICK_BLOCK) return;
+        if (event.getItem() == null || event.getItem().getType() != Material.NETHERITE_SWORD) return;
+        if (!ALLOWED.contains(event.getPlayer().getName())) return;
+
+        shadowSlash(event.getPlayer());
+    }
+
+    // Right-click: single → Starfall, double → Teleport
+    @EventHandler
+    public void onRightClick(PlayerInteractEvent event) {
         if (event.getAction() != Action.RIGHT_CLICK_AIR && event.getAction() != Action.RIGHT_CLICK_BLOCK) return;
         if (event.getItem() == null || event.getItem().getType() != Material.NETHERITE_SWORD) return;
         if (!ALLOWED.contains(event.getPlayer().getName())) return;
@@ -74,33 +85,25 @@ public class BaneOfDragons extends JavaPlugin implements Listener {
         long now   = System.currentTimeMillis();
         long last  = lastClickTime.getOrDefault(uuid, 0L);
 
-        // Reset sequence if gap between clicks is too long
         if (now - last > CLICK_WINDOW_MS) {
             clickCount.put(uuid, 0);
         }
-
         lastClickTime.put(uuid, now);
         int count = clickCount.merge(uuid, 1, Integer::sum);
 
         if (count == 1) {
-            // Schedule starfall — cancelled if a second click arrives in time
             BukkitTask task = getServer().getScheduler().runTaskLater(this, () -> {
-                pendingStarfall.remove(uuid);
+                pendingTask.remove(uuid);
                 clickCount.remove(uuid);
                 toggleStarfall(player);
-            }, STARFALL_DELAY);
-            pendingStarfall.put(uuid, task);
+            }, PENDING_DELAY);
+            pendingTask.put(uuid, task);
 
-        } else if (count == 2) {
+        } else if (count >= 2) {
             cancelPending(uuid);
+            clickCount.remove(uuid);
             teleportToLook(player);
-
-        } else if (count == 3) {
-            cancelPending(uuid);
-            shadowSlash(player);
         }
-
-        if (count >= 3) clickCount.remove(uuid);
     }
 
     // ── Starfall ──────────────────────────────────────────────────────────────
@@ -163,7 +166,6 @@ public class BaneOfDragons extends JavaPlugin implements Listener {
         var loc = player.getLocation();
         var dir = loc.getDirection().normalize();
 
-        // Damage + blindness to living entities within 4 blocks in a ~60° forward cone
         player.getNearbyEntities(4, 4, 4).stream()
             .filter(e -> e instanceof LivingEntity && e != player)
             .filter(e -> {
@@ -176,14 +178,13 @@ public class BaneOfDragons extends JavaPlugin implements Listener {
                 ((LivingEntity) e).addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS, 60, 0));
             });
 
-        // Launch player forward
         player.setVelocity(dir.clone().multiply(2.0).setY(0.3));
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private void cancelPending(UUID uuid) {
-        BukkitTask t = pendingStarfall.remove(uuid);
+        BukkitTask t = pendingTask.remove(uuid);
         if (t != null) t.cancel();
     }
 }
