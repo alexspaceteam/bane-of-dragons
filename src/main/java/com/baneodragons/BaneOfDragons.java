@@ -185,6 +185,5 @@ public class BaneOfDragons extends JavaPlugin implements Listener {
     private void cancelPending(UUID uuid) {
         BukkitTask t = pendingStarfall.remove(uuid);
         if (t != null) t.cancel();
-        clickCount.remove(uuid);
     }
 }
