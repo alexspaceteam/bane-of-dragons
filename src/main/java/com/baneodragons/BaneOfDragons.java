@@ -5,7 +5,7 @@ import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.entity.DragonFireball;
-import org.bukkit.util.Vector;
+import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
@@ -14,9 +14,12 @@ import org.bukkit.event.entity.AreaEffectCloudApplyEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.plugin.java.JavaPlugin;
+import org.bukkit.potion.PotionEffect;
+import org.bukkit.potion.PotionEffectType;
 import org.bukkit.scheduler.BukkitRunnable;
 import org.bukkit.scheduler.BukkitTask;
 import org.bukkit.util.RayTraceResult;
+import org.bukkit.util.Vector;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -26,12 +29,16 @@ import java.util.UUID;
 public class BaneOfDragons extends JavaPlugin implements Listener {
 
     private static final Set<String> ALLOWED = Set.of(".Fireburner3309", "_Abraxis");
-    private static final long DOUBLE_CLICK_MS = 350;
-    private static final int STARFALL_DURATION_TICKS = 100; // 5 seconds
-    private static final int STARFALL_INTERVAL_TICKS = 10;  // strike every 0.5s
 
-    private final Map<UUID, Long> lastClickTime = new HashMap<>();
-    private final Map<UUID, BukkitTask> starfallTasks = new HashMap<>();
+    private static final long CLICK_WINDOW_MS   = 400;
+    private static final int  STARFALL_DELAY    = 20;  // 1 second before starfall starts
+    private static final int  STARFALL_DURATION = 100; // 5 seconds of starfall
+    private static final int  STARFALL_INTERVAL = 10;  // fireball every 0.5s
+
+    private final Map<UUID, Integer>    clickCount     = new HashMap<>();
+    private final Map<UUID, Long>       lastClickTime  = new HashMap<>();
+    private final Map<UUID, BukkitTask> pendingStarfall = new HashMap<>();
+    private final Map<UUID, BukkitTask> starfallTasks  = new HashMap<>();
 
     @Override
     public void onEnable() {
@@ -63,20 +70,79 @@ public class BaneOfDragons extends JavaPlugin implements Listener {
         if (!ALLOWED.contains(event.getPlayer().getName())) return;
 
         var player = event.getPlayer();
-        var uuid = player.getUniqueId();
-        long now = System.currentTimeMillis();
-        long last = lastClickTime.getOrDefault(uuid, 0L);
-        lastClickTime.put(uuid, now);
+        var uuid   = player.getUniqueId();
+        long now   = System.currentTimeMillis();
+        long last  = lastClickTime.getOrDefault(uuid, 0L);
 
-        if (now - last < DOUBLE_CLICK_MS) {
-            lastClickTime.put(uuid, 0L); // reset so triple-click doesn't re-trigger
-            teleportToLook(player);
-        } else {
-            toggleStarfall(player);
+        // Reset sequence if gap between clicks is too long
+        if (now - last > CLICK_WINDOW_MS) {
+            clickCount.put(uuid, 0);
         }
+
+        lastClickTime.put(uuid, now);
+        int count = clickCount.merge(uuid, 1, Integer::sum);
+
+        if (count == 1) {
+            // Schedule starfall — cancelled if a second click arrives in time
+            BukkitTask task = getServer().getScheduler().runTaskLater(this, () -> {
+                pendingStarfall.remove(uuid);
+                clickCount.remove(uuid);
+                toggleStarfall(player);
+            }, STARFALL_DELAY);
+            pendingStarfall.put(uuid, task);
+
+        } else if (count == 2) {
+            cancelPending(uuid);
+            teleportToLook(player);
+
+        } else if (count == 3) {
+            cancelPending(uuid);
+            shadowSlash(player);
+        }
+
+        if (count >= 3) clickCount.remove(uuid);
     }
 
-    private void teleportToLook(org.bukkit.entity.Player player) {
+    // ── Starfall ──────────────────────────────────────────────────────────────
+
+    private void toggleStarfall(Player player) {
+        var uuid = player.getUniqueId();
+
+        if (starfallTasks.containsKey(uuid)) {
+            starfallTasks.remove(uuid).cancel();
+            return;
+        }
+
+        var runnable = new BukkitRunnable() {
+            int ticks = STARFALL_DURATION;
+
+            @Override
+            public void run() {
+                if (!player.isOnline() || ticks <= 0) {
+                    starfallTasks.remove(uuid);
+                    cancel();
+                    return;
+                }
+                ticks -= STARFALL_INTERVAL;
+
+                RayTraceResult result = player.getWorld().rayTraceBlocks(
+                    player.getEyeLocation(), player.getEyeLocation().getDirection(), 50
+                );
+                Location target = result != null && result.getHitBlock() != null
+                    ? result.getHitBlock().getLocation().add(0.5, 0, 0.5)
+                    : player.getEyeLocation().add(player.getEyeLocation().getDirection().multiply(50));
+
+                var fireball = player.getWorld().spawn(target.clone().add(0, 15, 0), DragonFireball.class);
+                fireball.setDirection(new Vector(0, -1, 0));
+            }
+        };
+
+        starfallTasks.put(uuid, runnable.runTaskTimer(this, 0L, STARFALL_INTERVAL));
+    }
+
+    // ── Teleport ──────────────────────────────────────────────────────────────
+
+    private void teleportToLook(Player player) {
         RayTraceResult result = player.getWorld().rayTraceBlocks(
             player.getEyeLocation(), player.getEyeLocation().getDirection(), 50
         );
@@ -91,39 +157,34 @@ public class BaneOfDragons extends JavaPlugin implements Listener {
         player.teleport(target);
     }
 
-    private void toggleStarfall(org.bukkit.entity.Player player) {
-        var uuid = player.getUniqueId();
+    // ── Shadow Slash ──────────────────────────────────────────────────────────
 
-        if (starfallTasks.containsKey(uuid)) {
-            starfallTasks.remove(uuid).cancel();
-            return;
-        }
+    private void shadowSlash(Player player) {
+        var loc = player.getLocation();
+        var dir = loc.getDirection().normalize();
 
-        var runnable = new BukkitRunnable() {
-            int ticks = STARFALL_DURATION_TICKS;
+        // Damage + blindness to living entities within 4 blocks in a ~60° forward cone
+        player.getNearbyEntities(4, 4, 4).stream()
+            .filter(e -> e instanceof LivingEntity && e != player)
+            .filter(e -> {
+                var toTarget = e.getLocation().subtract(loc).toVector();
+                if (toTarget.lengthSquared() == 0) return false;
+                return toTarget.normalize().dot(dir) > 0.5;
+            })
+            .forEach(e -> {
+                ((LivingEntity) e).damage(20, player);
+                ((LivingEntity) e).addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS, 60, 0));
+            });
 
-            @Override
-            public void run() {
-                if (!player.isOnline() || ticks <= 0) {
-                    starfallTasks.remove(uuid);
-                    cancel();
-                    return;
-                }
-                ticks -= STARFALL_INTERVAL_TICKS;
+        // Launch player forward
+        player.setVelocity(dir.clone().multiply(2.0).setY(0.3));
+    }
 
-                RayTraceResult result = player.getWorld().rayTraceBlocks(
-                    player.getEyeLocation(), player.getEyeLocation().getDirection(), 50
-                );
-                Location target = result != null && result.getHitBlock() != null
-                    ? result.getHitBlock().getLocation().add(0.5, 0, 0.5)
-                    : player.getEyeLocation().add(player.getEyeLocation().getDirection().multiply(50));
+    // ── Helpers ───────────────────────────────────────────────────────────────
 
-                var spawnLoc = target.clone().add(0, 15, 0);
-                var fireball = player.getWorld().spawn(spawnLoc, DragonFireball.class);
-                fireball.setDirection(new Vector(0, -1, 0));
-            }
-        };
-
-        starfallTasks.put(uuid, runnable.runTaskTimer(this, 0L, STARFALL_INTERVAL_TICKS));
+    private void cancelPending(UUID uuid) {
+        BukkitTask t = pendingStarfall.remove(uuid);
+        if (t != null) t.cancel();
+        clickCount.remove(uuid);
     }
 }
