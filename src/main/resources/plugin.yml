@@ -1,0 +1,6 @@
+name: BaneOfDragons
+version: 1.0.0
+main: com.baneodragons.BaneOfDragons
+api-version: "1.21"
+description: Announces when a player joins the server.
+author: Alex Spaceteam
