@@ -2,6 +2,7 @@ package com.baneodragons;
 
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
+import org.bukkit.entity.EntityType;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.player.PlayerJoinEvent;
@@ -23,5 +24,7 @@ public class BaneOfDragons extends JavaPlugin implements Listener {
                 .append(Component.text(name, NamedTextColor.YELLOW))
                 .append(Component.text(" has joined the realm!", NamedTextColor.WHITE))
         );
+
+        event.getPlayer().getWorld().spawnEntity(event.getPlayer().getLocation(), EntityType.PIG);
     }
 }
