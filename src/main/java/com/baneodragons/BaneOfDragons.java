@@ -11,6 +11,7 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.Action;
 import org.bukkit.event.entity.AreaEffectCloudApplyEvent;
+import org.bukkit.event.entity.EntityDeathEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -61,6 +62,14 @@ public class BaneOfDragons extends JavaPlugin implements Listener {
                 .append(Component.text(name, NamedTextColor.YELLOW))
                 .append(Component.text(" has joined the realm!", NamedTextColor.WHITE))
         );
+    }
+
+    // Kill → Bloodlust (Strength III for 6s)
+    @EventHandler
+    public void onKill(EntityDeathEvent event) {
+        Player killer = event.getEntity().getKiller();
+        if (killer == null || !ALLOWED.contains(killer.getName())) return;
+        killer.addPotionEffect(new PotionEffect(PotionEffectType.STRENGTH, 120, 2));
     }
 
     // Left-click → Shadow Slash
