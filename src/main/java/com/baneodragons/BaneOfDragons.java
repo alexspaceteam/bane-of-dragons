@@ -30,6 +30,7 @@ import java.util.UUID;
 public class BaneOfDragons extends JavaPlugin implements Listener {
 
     private static final Set<String> ALLOWED = Set.of(".Fireburner3309", "_Abraxis");
+    private static final Set<String> BOUNTY  = Set.of(".Fireburner3309", "_Abraxis");
 
     private static final long CLICK_WINDOW_MS  = 400;
     private static final int  PENDING_DELAY    = 8;   // ticks to wait before firing (allows double-click)
@@ -45,6 +46,15 @@ public class BaneOfDragons extends JavaPlugin implements Listener {
     public void onEnable() {
         getServer().getPluginManager().registerEvents(this, this);
         getLogger().info("BaneOfDragons enabled!");
+
+        // Periodic bounty reminder every 5 minutes
+        getServer().getScheduler().runTaskTimer(this, () -> {
+            for (String name : BOUNTY) {
+                if (getServer().getPlayerExact(name) != null) {
+                    broadcastBounty(name);
+                }
+            }
+        }, 6000L, 6000L);
     }
 
     @EventHandler
@@ -62,14 +72,59 @@ public class BaneOfDragons extends JavaPlugin implements Listener {
                 .append(Component.text(name, NamedTextColor.YELLOW))
                 .append(Component.text(" has joined the realm!", NamedTextColor.WHITE))
         );
+        if (BOUNTY.contains(name)) {
+            broadcastBounty(name);
+        }
+    }
+
+    private void broadcastBounty(String name) {
+        getServer().broadcast(Component.text(""));
+        getServer().broadcast(
+            Component.text("  !! BOUNTY ALERT !!  ", NamedTextColor.DARK_RED)
+        );
+        getServer().broadcast(
+            Component.text("  ", NamedTextColor.RED)
+                .append(Component.text(name, NamedTextColor.YELLOW))
+                .append(Component.text(" is online and has a BOUNTY on their head!", NamedTextColor.RED))
+        );
+        getServer().broadcast(
+            Component.text("  Trap them in a battle box with no items!", NamedTextColor.GOLD)
+        );
+        getServer().broadcast(
+            Component.text("  Reward: ", NamedTextColor.YELLOW)
+                .append(Component.text("26 Netherite Blocks", NamedTextColor.DARK_GRAY))
+                .append(Component.text(" + ", NamedTextColor.WHITE))
+                .append(Component.text("53 Emerald Blocks", NamedTextColor.GREEN))
+        );
+        getServer().broadcast(Component.text(""));
     }
 
     // Kill → Bloodlust (Strength III for 6s)
     @EventHandler
     public void onKill(EntityDeathEvent event) {
+        Player killed = event.getEntity() instanceof Player p ? p : null;
         Player killer = event.getEntity().getKiller();
-        if (killer == null || !ALLOWED.contains(killer.getName())) return;
-        killer.addPotionEffect(new PotionEffect(PotionEffectType.STRENGTH, 120, 2));
+        if (killer == null) return;
+
+        // Bounty reward: killer gets 26 netherite blocks + 53 emerald blocks
+        var battleBox = new org.bukkit.Location(killer.getWorld(), -686, 63, 72);
+        if (killed != null && BOUNTY.contains(killed.getName())
+                && killer.getLocation().distanceSquared(battleBox) <= 25) {
+            var inv = killer.getInventory();
+            inv.addItem(new org.bukkit.inventory.ItemStack(Material.NETHERITE_BLOCK, 26));
+            inv.addItem(new org.bukkit.inventory.ItemStack(Material.EMERALD_BLOCK, 53));
+            getServer().broadcast(
+                Component.text("  " + killer.getName(), NamedTextColor.YELLOW)
+                    .append(Component.text(" claimed the bounty on ", NamedTextColor.GOLD))
+                    .append(Component.text(killed.getName(), NamedTextColor.RED))
+                    .append(Component.text("!", NamedTextColor.GOLD))
+            );
+        }
+
+        // Bloodlust: allowed players get Strength III on any kill
+        if (ALLOWED.contains(killer.getName())) {
+            killer.addPotionEffect(new PotionEffect(PotionEffectType.STRENGTH, 120, 2));
+        }
     }
 
     // Left-click → Shadow Slash
