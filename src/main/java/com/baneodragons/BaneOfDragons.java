@@ -12,6 +12,7 @@ import org.bukkit.event.Listener;
 import org.bukkit.event.block.Action;
 import org.bukkit.event.entity.AreaEffectCloudApplyEvent;
 import org.bukkit.event.entity.EntityDeathEvent;
+import org.bukkit.event.entity.ProjectileHitEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -41,6 +42,7 @@ public class BaneOfDragons extends JavaPlugin implements Listener {
     private final Map<UUID, Long>       lastClickTime = new HashMap<>();
     private final Map<UUID, BukkitTask> pendingTask   = new HashMap<>();
     private final Map<UUID, BukkitTask> starfallTasks = new HashMap<>();
+    private final Map<UUID, Integer>    killCount     = new HashMap<>();
 
     @Override
     public void onEnable() {
@@ -65,6 +67,15 @@ public class BaneOfDragons extends JavaPlugin implements Listener {
     }
 
     @EventHandler
+    public void onFireballHit(ProjectileHitEvent event) {
+        if (!(event.getEntity() instanceof DragonFireball fireball)) return;
+        event.setCancelled(true);
+        Location loc = fireball.getLocation();
+        org.bukkit.entity.Entity shooter = fireball.getShooter() instanceof org.bukkit.entity.Entity e ? e : null;
+        loc.getWorld().createExplosion(loc, 4.0f, false, true, shooter);
+    }
+
+    @EventHandler
     public void onPlayerJoin(PlayerJoinEvent event) {
         String name = event.getPlayer().getName();
         getServer().broadcast(
@@ -85,7 +96,7 @@ public class BaneOfDragons extends JavaPlugin implements Listener {
         getServer().broadcast(
             Component.text("  ", NamedTextColor.RED)
                 .append(Component.text(name, NamedTextColor.YELLOW))
-                .append(Component.text(" is online and has a BOUNTY on their head!", NamedTextColor.RED))
+                .append(Component.text(" is on the bounty for witchcraft!", NamedTextColor.RED))
         );
         getServer().broadcast(
             Component.text("  Trap them in a battle box with no items!", NamedTextColor.GOLD)
@@ -124,7 +135,48 @@ public class BaneOfDragons extends JavaPlugin implements Listener {
         // Bloodlust: allowed players get Strength III on any kill
         if (ALLOWED.contains(killer.getName())) {
             killer.addPotionEffect(new PotionEffect(PotionEffectType.STRENGTH, 120, 2));
+
+            int kills = killCount.merge(killer.getUniqueId(), 1, Integer::sum);
+            if (kills >= 10) {
+                killCount.put(killer.getUniqueId(), 0);
+                if (Math.random() < 0.25) {
+                    dragonWrath(killer);
+                }
+            }
         }
+    }
+
+    private void dragonWrath(Player player) {
+        // Launch player upward and give slow falling so they don't die
+        player.setVelocity(new Vector(0, 3.5, 0));
+        player.addPotionEffect(new PotionEffect(PotionEffectType.SLOW_FALLING, 200, 0));
+
+        // Kill all non-player entities within 4 chunks (64 blocks)
+        player.getWorld().getNearbyEntities(player.getLocation(), 64, 64, 64).stream()
+            .filter(e -> !(e instanceof Player))
+            .forEach(org.bukkit.entity.Entity::remove);
+
+        getServer().broadcast(
+            Component.text("  ", NamedTextColor.DARK_RED)
+                .append(Component.text(player.getName(), NamedTextColor.YELLOW))
+                .append(Component.text(" has unleashed Dragon's Wrath!", NamedTextColor.DARK_RED))
+        );
+    }
+
+    // Right-click Leap feather → launch forward, consume one feather
+    @EventHandler
+    public void onLeapFeather(PlayerInteractEvent event) {
+        if (event.getAction() != Action.RIGHT_CLICK_AIR && event.getAction() != Action.RIGHT_CLICK_BLOCK) return;
+        var item = event.getItem();
+        if (item == null || item.getType() != Material.FEATHER) return;
+        var meta = item.getItemMeta();
+        if (meta == null || !meta.hasDisplayName()) return;
+        if (!meta.getDisplayName().equals("Leap")) return;
+
+        var player = event.getPlayer();
+        var dir = player.getLocation().getDirection().normalize();
+        player.setVelocity(dir.clone().multiply(2.5).setY(0.5));
+        item.setAmount(item.getAmount() - 1);
     }
 
     // Left-click → Shadow Slash
