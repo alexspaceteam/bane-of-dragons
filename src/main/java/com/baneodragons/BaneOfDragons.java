@@ -2,8 +2,11 @@ package com.baneodragons;
 
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
+import org.bukkit.Color;
+import org.bukkit.GameMode;
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.inventory.meta.LeatherArmorMeta;
 import org.bukkit.entity.DragonFireball;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
@@ -14,7 +17,9 @@ import org.bukkit.event.entity.AreaEffectCloudApplyEvent;
 import org.bukkit.event.entity.EntityDeathEvent;
 import org.bukkit.event.entity.ProjectileHitEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
+import org.bukkit.event.player.PlayerItemDamageEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.event.player.PlayerToggleFlightEvent;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
@@ -49,6 +54,19 @@ public class BaneOfDragons extends JavaPlugin implements Listener {
         getServer().getPluginManager().registerEvents(this, this);
         getLogger().info("BaneOfDragons enabled!");
 
+        // Manage allowFlight for green leather double jump
+        getServer().getScheduler().runTaskTimer(this, () -> {
+            for (var player : getServer().getOnlinePlayers()) {
+                if (player.getGameMode() == GameMode.CREATIVE || player.getGameMode() == GameMode.SPECTATOR) continue;
+                boolean green = wearingGreenLeather(player);
+                if (green && player.isOnGround() && !player.getAllowFlight()) {
+                    player.setAllowFlight(true);
+                } else if (!green && player.getAllowFlight()) {
+                    player.setAllowFlight(false);
+                }
+            }
+        }, 0L, 5L);
+
         // Periodic bounty reminder every 5 minutes
         getServer().getScheduler().runTaskTimer(this, () -> {
             for (String name : BOUNTY) {
@@ -57,6 +75,23 @@ public class BaneOfDragons extends JavaPlugin implements Listener {
                 }
             }
         }, 6000L, 6000L);
+    }
+
+    @EventHandler
+    public void onDoubleJump(PlayerToggleFlightEvent event) {
+        var player = event.getPlayer();
+        if (player.getGameMode() == GameMode.CREATIVE || player.getGameMode() == GameMode.SPECTATOR) return;
+        if (!wearingGreenLeather(player)) return;
+        event.setCancelled(true);
+        player.setAllowFlight(false);
+        player.setVelocity(player.getVelocity().setY(1.0));
+    }
+
+    @EventHandler
+    public void onArmorDamage(PlayerItemDamageEvent event) {
+        var item = event.getItem();
+        if (!(item.getItemMeta() instanceof LeatherArmorMeta meta)) return;
+        if (meta.getColor().equals(GREEN_DYE)) event.setCancelled(true);
     }
 
     @EventHandler
@@ -292,12 +327,27 @@ public class BaneOfDragons extends JavaPlugin implements Listener {
             .forEach(e -> {
                 ((LivingEntity) e).damage(20, player);
                 ((LivingEntity) e).addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS, 60, 0));
+                if (wearingGreenLeather(player)) {
+                    ((LivingEntity) e).addPotionEffect(new PotionEffect(PotionEffectType.POISON, 100, 0));
+                }
             });
 
         player.setVelocity(dir.clone().multiply(2.0).setY(0.3));
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    // Green dye color in Minecraft: #667F33
+    private static final Color GREEN_DYE = Color.fromRGB(102, 127, 51);
+
+    private boolean wearingGreenLeather(Player player) {
+        for (var item : player.getInventory().getArmorContents()) {
+            if (item == null) continue;
+            if (!(item.getItemMeta() instanceof LeatherArmorMeta meta)) continue;
+            if (meta.getColor().equals(GREEN_DYE)) return true;
+        }
+        return false;
+    }
 
     private void cancelPending(UUID uuid) {
         BukkitTask t = pendingTask.remove(uuid);
